@@ -1,0 +1,206 @@
+Description: Creates Airflow Webserver Service
+
+Resources:
+  WebserverExternalSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Airflow webserver. Allow all inbound traffic.
+      GroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-security-group"
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 0
+          IpProtocol: -1
+          ToPort: 0
+      SecurityGroupIngress:
+      {% for ip in whitelistedIPs %}
+        - CidrIp: "{{ ip }}"
+          FromPort: "{{ service.port }}"
+          IpProtocol: tcp
+          ToPort: "{{ service.port }}"
+      {% endfor %}
+      VpcId: !ImportValue network-VpcId
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-security-group"
+
+  WebserverInternalSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Airflow webserver.
+      GroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-internal-security-group"
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 0
+          IpProtocol: -1
+          ToPort: 0
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !GetAtt WebserverExternalSecurityGroup.GroupId
+          FromPort: "{{ service.webserver.port }}"
+          IpProtocol: tcp
+          ToPort: "{{ service.webserver.port }}"
+      VpcId: !ImportValue network-VpcId
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-internal-security-group"
+
+  WebserverTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: "{{ service.webserver.cpu }}"
+      Memory: "{{ service.webserver.memory }}"
+      ExecutionRoleArn: !ImportValue iam-ECSTaskRoleArn
+      Family: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-task-definition"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        - Name: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver"
+          Image: !Sub
+            - "${AWS::AccountId}.dkr.ecr.{{ AWS_REGION }}.amazonaws.com/${ecr_repository}:latest"
+            - ecr_repository: !ImportValue ecr-AirflowDockerRepositoryName
+          Essential: true
+          PortMappings:
+            - ContainerPort: "{{ service.webserver.port }}"
+              HostPort: "{{ service.webserver.port }}"
+          Command:
+            - webserver
+          Environment:
+            - Name: REDIS_HOST
+              Value: !ImportValue redis-CeleryBackendHost
+            - Name: REDIS_PORT
+              Value: !ImportValue redis-CeleryBackendPort
+            - Name: POSTGRES_HOST
+              Value: !ImportValue database-MetadataDBInstanceHost
+            - Name: POSTGRES_PORT
+              Value: !ImportValue database-MetadataDBInstancePort
+            - Name: POSTGRES_USER
+              Value: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-MetadataDBSecretId, ':SecretString:username}}' ]] {% endraw %}
+            - Name: POSTGRES_PASSWORD
+              Value: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-MetadataDBSecretId, ':SecretString:password}}' ]] {% endraw %}
+            - Name: POSTGRES_DB
+              Value: "{{ metadataDb.dbName }}"
+            - Name: AIRFLOW_BASE_URL
+              Value: "{{ service.baseUrl }}"
+            - Name: ENABLE_REMOTE_LOGGING
+              Value: False
+            - Name: STAGE
+              Value: "{{ ENVIRONMENT }}"
+            - Name: FERNET_KEY
+              Value: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-AirflowFernetKeySecretId, ':SecretString:fernet_key}}' ]] {% endraw %}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !ImportValue cloudwatch-AirflowECSLogGroupName
+              awslogs-region: "{{ AWS_REGION }}"
+              awslogs-stream-prefix: webserver
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-task-definition"
+
+  WebserverAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-alb"
+      Type: application
+      SecurityGroups:
+        - !Ref WebserverExternalSecurityGroup
+      Subnets:
+        - !ImportValue network-PublicSubnet1Id
+        - !ImportValue network-PublicSubnet2Id
+        - !ImportValue network-PublicSubnet3Id
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-alb"
+
+  WebserverAlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-alb-tg"
+      Port: "{{ service.webserver.port }}"
+      Protocol: HTTP
+      VpcId: !ImportValue network-VpcId
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: /health
+      HealthCheckPort: "{{ service.webserver.port }}"
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 3
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-alb-tg"
+
+  WebserverAlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref WebserverAlbTargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref WebserverAlb
+      Port: "{{ service.port }}"
+      Protocol: HTTP
+
+  WebserverEcsService:
+    Type: AWS::ECS::Service
+    DependsOn: WebserverAlbListener
+    Properties:
+      ServiceName: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver"
+      Cluster: !ImportValue ecs-AirflowECSClusteArn
+      TaskDefinition: !Ref WebserverTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: "{{ service.webserver.desiredCount }}"
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref WebserverInternalSecurityGroup
+          Subnets:
+            - !ImportValue network-PublicSubnet1Id
+            - !ImportValue network-PublicSubnet2Id
+            - !ImportValue network-PublicSubnet3Id
+      LoadBalancers:
+        - ContainerName: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver"
+          ContainerPort: "{{ service.webserver.port }}"
+          TargetGroupArn: !Ref WebserverAlbTargetGroup
+
+  WebserverScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: "{{ service.webserver.autoscaling.maxCapacity }}"
+      MinCapacity: "{{ service.webserver.autoscaling.minCapacity }}"
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+      ServiceNamespace: ecs
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ResourceId: !Join ["/", [service, !ImportValue ecs-AirflowECSClusterId, !GetAtt WebserverEcsService.Name]]
+
+  ServiceScalingPolicyCPU:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-tracking-cpu"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WebserverScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: "{{ service.webserver.autoscaling.cpu.target }}"
+        ScaleInCooldown: "{{ service.webserver.autoscaling.cpu.scaleInCooldown }}"
+        ScaleOutCooldown: "{{ service.webserver.autoscaling.cpu.scaleOutCooldown }}"
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+
+  ServiceScalingPolicyMemory:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: "{{ serviceName }}-{{ ENVIRONMENT }}-webserver-tracking-memory"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WebserverScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: "{{ service.webserver.autoscaling.memory.target }}"
+        ScaleInCooldown: "{{ service.webserver.autoscaling.memory.scaleInCooldown }}"
+        ScaleOutCooldown: "{{ service.webserver.autoscaling.memory.scaleOutCooldown }}"
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+
+Outputs:
+  AirflowWebServerEndpoint:
+    Value: !GetAtt WebserverAlb.DNSName

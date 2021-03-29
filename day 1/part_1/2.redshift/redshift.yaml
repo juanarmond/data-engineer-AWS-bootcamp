@@ -1,0 +1,157 @@
+Description: Create Redshift Cluster and Connections
+
+Resources:
+
+  JuanRedshift:
+    Type: AWS::Redshift::Cluster
+    Properties:
+      AllowVersionUpgrade: True
+      AutomatedSnapshotRetentionPeriod: 5
+      AvailabilityZone: us-east-2a
+      ClusterIdentifier: my-redshift-cluster
+      ClusterParameterGroupName: !Ref RedshifParameterGroup
+      ClusterSubnetGroupName: !Ref RedshifSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref RedshiftEC2SecurityGroup
+      ClusterType: multi-node
+      DBName: production
+      Encrypted: True
+      MasterUsername: admin
+      MasterUserPassword: Admin1234
+      NodeType: dc2.large
+      NumberOfNodes: 2
+      PubliclyAccessible: True
+      IamRoles:
+        - !GetAtt RedshiftRole.Arn
+
+
+  RedshifParameterGroup:
+    Type: AWS::Redshift::ClusterParameterGroup
+    Properties:
+      Description: Parameter group for redshift
+      ParameterGroupFamily: redshift-1.0
+      Parameters:
+        - ParameterName: max_concurrency_scaling_clusters
+          ParameterValue: 0
+
+
+  RedshifSubnetGroup:
+    Type: AWS::Redshift::ClusterSubnetGroup
+    Properties:
+      Description: Redshift subnet group
+      SubnetIds:
+        - !Ref RedshiftSubnet
+
+  RedshiftSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2a
+      CidrBlock: 10.0.0.0/24
+      VpcId: !Ref RedshiftVPC
+
+  RedshiftVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+
+  RedshiftEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Redshit. Access to my IP address
+      GroupName: String
+      SecurityGroupEgress:
+        - CidrIp: 35.190.215.9/32
+          FromPort: 5439
+          IpProtocol: tcp
+          ToPort: 5439
+      SecurityGroupIngress:
+        - CidrIp: 35.190.215.9/32
+          FromPort: 5439
+          IpProtocol: tcp
+          ToPort: 5439
+      VpcId: !Ref RedshiftVPC
+
+  RedshiftVPCInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  RedshiftVPCAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref RedshiftVPC
+      InternetGatewayId: !Ref RedshiftVPCInternetGateway
+
+  RedshiftRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref RedshiftVPC
+
+  RedshiftVPCRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref RedshiftVPCInternetGateway
+      RouteTableId: !Ref RedshiftRouteTable
+
+  RedshiftSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RedshiftRouteTable
+      SubnetId: !Ref RedshiftSubnet
+
+  RedshiftRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - redshift.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+      RoleName: iam-redshift-role
+
+  RedshiftSpectrumPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:Get*
+              - s3:List*
+            Resource:
+              - arn:aws:s3:::*
+          - Effect: Allow
+            Action:
+              - glue:CreateDatabase
+              - glue:DeleteDatabase
+              - glue:GetDatabase
+              - glue:GetDatabases
+              - glue:UpdateDatabase
+              - glue:CreateTable
+              - glue:DeleteTable
+              - glue:BatchDeleteTable
+              - glue:UpdateTable
+              - glue:GetTable
+              - glue:GetTables
+              - glue:BatchCreatePartition
+              - glue:CreatePartition
+              - glue:DeletePartition
+              - glue:BatchDeletePartition
+              - glue:UpdatePartition
+              - glue:GetPartition
+              - glue:GetPartitions
+              - glue:BatchGetPartition
+            Resource:
+              - "*"
+          - Effect: Allow
+            Action:
+              - athena:*
+            Resource:
+              - "*"
+      PolicyName: redshiftSpectrum
+      Roles:
+        - !Ref RedshiftRole

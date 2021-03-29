@@ -1,0 +1,110 @@
+Description: Creates network resources for Airflow
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "{{ service.cidrBlock }}/16"
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-igw"
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-public-route-table"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "{{ AWS_REGION }}{{ publicSubnet.1.availabilityZone }}"
+      CidrBlock: "{{ publicSubnet.1.cidrBlock }}"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-public-subnet-1"
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "{{ AWS_REGION }}{{ publicSubnet.2.availabilityZone }}"
+      CidrBlock: "{{ publicSubnet.2.cidrBlock }}"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-public-subnet-2"
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: "{{ AWS_REGION }}{{ publicSubnet.3.availabilityZone }}"
+      CidrBlock: "{{ publicSubnet.3.cidrBlock }}"
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-public-subnet-3"
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet3
+
+
+Outputs:
+  VpcId:
+    Value: !Ref VPC
+    Export:
+      Name: "network-VpcId"
+
+  PublicSubnet1Id:
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: "network-PublicSubnet1Id"
+
+  PublicSubnet2Id:
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: "network-PublicSubnet2Id"
+
+  PublicSubnet3Id:
+    Value: !Ref PublicSubnet3
+    Export:
+      Name: "network-PublicSubnet3Id"

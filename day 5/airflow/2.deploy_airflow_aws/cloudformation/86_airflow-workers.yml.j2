@@ -1,0 +1,130 @@
+Description: Creates Airflow Workers Service
+
+Resources:
+  WorkerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Airflow workers
+      GroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-workers-security-group"
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 0
+          IpProtocol: -1
+          ToPort: 0
+      SecurityGroupIngress:
+        - CidrIp: "{{ service.cidrBlock }}/16"
+          FromPort: "{{ service.workers.port }}"
+          IpProtocol: tcp
+          ToPort: "{{ service.workers.port }}"
+      VpcId: !ImportValue network-VpcId
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-workers-security-group"
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: "{{ service.workers.cpu }}"
+      Memory: "{{ service.workers.memory }}"
+      ExecutionRoleArn: !ImportValue iam-ECSTaskRoleArn
+      Family: "{{ serviceName }}-{{ ENVIRONMENT }}-workers-task-definition"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ContainerDefinitions:
+        - Name: "{{ serviceName }}-{{ ENVIRONMENT }}-workers"
+          Image: !Sub
+            - "${AWS::AccountId}.dkr.ecr.{{ AWS_REGION }}.amazonaws.com/${ecr_repository}:latest"
+            - ecr_repository: !ImportValue ecr-AirflowDockerRepositoryName
+          Essential: true
+          PortMappings:
+            - ContainerPort: "{{ service.workers.port }}"
+              HostPort: "{{ service.workers.port }}"
+          Command:
+            - worker
+          Environment:
+            - Name: REDIS_HOST
+              Value: !ImportValue redis-CeleryBackendHost
+            - Name: REDIS_PORT
+              Value: !ImportValue redis-CeleryBackendPort
+            - Name: POSTGRES_HOST
+              Value: !ImportValue database-MetadataDBInstanceHost
+            - Name: POSTGRES_PORT
+              Value: !ImportValue database-MetadataDBInstancePort
+            - Name: POSTGRES_USER
+              Value: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-MetadataDBSecretId, ':SecretString:username}}' ]] {% endraw %}
+            - Name: POSTGRES_PASSWORD
+              Value: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-MetadataDBSecretId, ':SecretString:password}}' ]] {% endraw %}
+            - Name: POSTGRES_DB
+              Value: "{{ metadataDb.dbName }}"
+            - Name: AIRFLOW_BASE_URL
+              Value: "{{ service.baseUrl }}"
+            - Name: ENABLE_REMOTE_LOGGING
+              Value: False
+            - Name: STAGE
+              Value: "{{ ENVIRONMENT }}"
+            - Name: FERNET_KEY
+              Value: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-AirflowFernetKeySecretId, ':SecretString:fernet_key}}' ]] {% endraw %}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !ImportValue cloudwatch-AirflowECSLogGroupName
+              awslogs-region: "{{ AWS_REGION }}"
+              awslogs-stream-prefix: workers
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-workers-task-definition"
+
+  WorkersEcsService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: "{{ serviceName }}-{{ ENVIRONMENT }}-workers"
+      Cluster: !ImportValue ecs-AirflowECSClusteArn
+      TaskDefinition: !Ref WorkerTaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: "{{ service.workers.desiredCount }}"
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref WorkerSecurityGroup
+          Subnets:
+            - !ImportValue network-PublicSubnet1Id
+            - !ImportValue network-PublicSubnet2Id
+            - !ImportValue network-PublicSubnet3Id
+
+  WorkersScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: "{{ service.workers.autoscaling.maxCapacity }}"
+      MinCapacity: "{{ service.workers.autoscaling.minCapacity }}"
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+      ServiceNamespace: ecs
+      ScalableDimension: 'ecs:service:DesiredCount'
+      ResourceId: !Join ["/", [service, !ImportValue ecs-AirflowECSClusterId, !GetAtt WorkersEcsService.Name]]
+
+  ServiceScalingPolicyCPU:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: "{{ serviceName }}-{{ ENVIRONMENT }}-workers-tracking-cpu"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WorkersScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: "{{ service.workers.autoscaling.cpu.target }}"
+        ScaleInCooldown: "{{ service.workers.autoscaling.cpu.scaleInCooldown }}"
+        ScaleOutCooldown: "{{ service.workers.autoscaling.cpu.scaleOutCooldown }}"
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+
+  ServiceScalingPolicyMemory:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: "{{ serviceName }}-{{ ENVIRONMENT }}-workers-tracking-memory"
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WorkersScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: "{{ service.workers.autoscaling.memory.target }}"
+        ScaleInCooldown: "{{ service.workers.autoscaling.memory.scaleInCooldown }}"
+        ScaleOutCooldown: "{{ service.workers.autoscaling.memory.scaleOutCooldown }}"
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization

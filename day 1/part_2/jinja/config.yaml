@@ -1,0 +1,16 @@
+environments:
+  - name: production
+    vpcCidrBlock: 10.0.0.0/16
+    subnetCidrBlock: 10.0.0.0/24
+  - name: staging
+    vpcCidrBlock: 10.1.0.0/16
+    subnetCidrBlock: 10.1.0.0/24
+
+
+redshiftCluster:
+  dbName: app
+  nodeType: dc2.large
+  numberOfNodes: 2
+  securityGroup:
+    whitelistedIps:
+      - 35.190.215.9/32

@@ -1,0 +1,114 @@
+serviceName: airflow
+owner: data-engineering
+
+service:
+  logGroupName: airflow/ecs/fargate
+  cidrBlock: 10.0.0.0
+  baseUrl: http://localhost:8080
+  port: 80
+  flower:
+    cpu: 512
+    memory: 1024
+    port: 5555
+    desiredCount: 1
+    autoscaling:
+      maxCapacity: 2
+      minCapacity: 1
+      cpu:
+        target: 70
+        scaleInCooldown: 180
+        scaleOutCooldown: 60
+      memory:
+        target: 90
+        scaleInCooldown: 180
+        scaleOutCooldown: 60
+  scheduler:
+    cpu: 1024
+    memory: 2048
+    desiredCount: 1
+    autoscaling:
+      maxCapacity: 2
+      minCapacity: 1
+      cpu:
+        target: 70
+        scaleInCooldown: 180
+        scaleOutCooldown: 60
+      memory:
+        target: 90
+        scaleInCooldown: 180
+        scaleOutCooldown: 60
+  webserver:
+    port: 8080
+    cpu: 1024
+    memory: 2048
+    desiredCount: 1
+    autoscaling:
+      maxCapacity: 3
+      minCapacity: 1
+      cpu:
+        target: 60
+        scaleInCooldown: 180
+        scaleOutCooldown: 60
+      memory:
+        target: 80
+        scaleInCooldown: 180
+        scaleOutCooldown: 60
+  workers:
+    port: 8793
+    cpu: 1024
+    memory: 2048
+    desiredCount: 2
+    autoscaling:
+      maxCapacity: 8
+      minCapacity: 2
+      cpu:
+        target: 70
+        scaleInCooldown: 60
+        scaleOutCooldown: 120
+      memory:
+        target: 70
+        scaleInCooldown: 60
+        scaleOutCooldown: 120
+
+publicSubnet:
+  1:
+    cidrBlock: 10.0.1.0/24
+    availabilityZone: a
+  2:
+    cidrBlock: 10.0.2.0/24
+    availabilityZone: b
+  3:
+    cidrBlock: 10.0.3.0/24
+    availabilityZone: c
+
+whitelistedIPs:
+  - 0.0.0.0/0
+
+metadataDb:
+  instanceType: db.t3.micro
+  port: 5432
+  dbName: airflow
+  engine: postgres
+  engineVersion: 11.7
+  family: postgres11
+  deletionProtection: false
+  enableIAMDatabaseAuthentication: true
+  allocatedStorage: 20
+  parameters:
+    maxConnections: 100
+
+celeryBackend:
+  port: 6379
+  azMode: single-az
+  engine: redis
+  engineVersion: 4.0.10
+  autoMinorVersionUpgrade: true
+  instanceType: cache.t3.small
+  numNodes: 1
+
+ecr:
+  imagesLifecycleCount: 10
+
+cloudwatch:
+  ecsLogGroup:
+    retention: 14

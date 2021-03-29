@@ -1,0 +1,106 @@
+Description: Create roles, groups and policies for data engineers.
+
+Resources:
+
+  IamRoleDataEngineer:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - sts:AssumeRole
+      Description: Data Engineer Role
+      ManagedPolicyArns:
+        - !Ref IamPolicyDataEngineer
+      RoleName: role-production-data-engineer
+
+  IamGroupDataEngineer:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: iam-group-data-engineer
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/ReadOnlyAccess
+        - !Ref IamPolicyGroupDataEngineer
+
+  IamPolicyGroupDataEngineer:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Policy to allow users to assume a Data Engineer role
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Resource:
+              - !GetAtt IamRoleDataEngineer.Arn
+
+  IamPolicyDataEngineer:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Data Engineer Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:List*
+              - s3:Get*
+              - s3:Delete*
+              - s3:Put*
+            Resource:
+              - arn:aws:s3:::*
+
+  IamRoleDataScientist:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - sts:AssumeRole
+      Description: Data Scientist Role
+      ManagedPolicyArns:
+        - !Ref IamPolicyDataScientist
+      RoleName: role-data-scientist
+
+  IamPolicyDataScientist:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Politicas de acesso para cientistas de dados
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:List*
+              - s3:Get*
+            Resource:
+              - arn:aws:s3:::*
+
+  IamGroupDataScientist:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: iam-group-data-scientist
+      ManagedPolicyArns:
+        - !Ref IamPolicyGroupDataScientist
+
+  IamPolicyGroupDataScientist:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Politicas de acesso para o grupo de cientistas de dados
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Resource:
+              - !GetAtt IamRoleDataScientist.Arn

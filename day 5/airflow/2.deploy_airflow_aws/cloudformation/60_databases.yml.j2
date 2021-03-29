@@ -1,0 +1,101 @@
+Description: Creates Airflow Metadata DB with credential managed by AWS secrets
+
+Resources:
+
+  MetadataDBPublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Postgres Metadata DB. Public access
+      GroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db-public-security-group"
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 0
+          IpProtocol: -1
+          ToPort: 0
+      SecurityGroupIngress:
+      {% for ip in whitelistedIPs %}
+        - CidrIp: "{{ ip }}"
+          FromPort: "{{ metadataDb.port }}"
+          IpProtocol: tcp
+          ToPort: "{{ metadataDb.port }}"
+      {% endfor %}
+        - CidrIp: "{{ service.cidrBlock }}/16"
+          FromPort: "{{ metadataDb.port }}"
+          IpProtocol: tcp
+          ToPort: "{{ metadataDb.port }}"
+      VpcId: !ImportValue network-VpcId
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db-public-security-group"
+
+  MetadataDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Postgres Metadata DB Subnet Group
+      DBSubnetGroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db-subnet-group"
+      SubnetIds:
+        - !ImportValue network-PublicSubnet1Id
+        - !ImportValue network-PublicSubnet2Id
+        - !ImportValue network-PublicSubnet3Id
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db-subnet-group"
+
+  MetadataDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: "{{ metadataDb.allocatedStorage }}"
+      AvailabilityZone: "{{ AWS_REGION }}{{ publicSubnet.1.availabilityZone }}"
+      BackupRetentionPeriod: 7
+      DBName: "{{ metadataDb.dbName }}"
+      DBInstanceIdentifier: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db-cluster"
+      DBInstanceClass: "{{ metadataDb.instanceType }}"
+      DBParameterGroupName: !Ref MetadataDBParameterGroup
+      DBSubnetGroupName: !Ref MetadataDBSubnetGroup
+      DeletionProtection: "{{ metadataDb.deletionProtection }}"
+      EnableIAMDatabaseAuthentication: "{{ metadataDb.enableIAMDatabaseAuthentication }}"
+      Engine: "{{ metadataDb.engine }}"
+      EngineVersion: "{{ metadataDb.engineVersion }}"
+      PubliclyAccessible: true
+      KmsKeyId: !ImportValue encryption-KMSKeyId
+      MasterUsername: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-MetadataDBSecretId, ':SecretString:username}}' ]] {% endraw %}
+      MasterUserPassword: {% raw %} !Join ['', ['{{resolve:secretsmanager:', !ImportValue secrets-MetadataDBSecretId, ':SecretString:password}}' ]] {% endraw %}
+      Port: "{{ metadataDb.port }}"
+      SourceRegion: "{{ AWS_REGION }}"
+      StorageEncrypted: true
+      VPCSecurityGroups:
+        - !Ref MetadataDBPublicSecurityGroup
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db"
+
+  MetadataDBParameterGroup:
+    Type:  AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Metadata DB Parameter Group
+      Family: "{{ metadataDb.family }}"
+      Parameters:
+        max_connections: "{{ metadataDb.parameters.maxConnections }}"
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-metadata-db-parameter-group"
+
+
+  MetadataDBSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !ImportValue secrets-MetadataDBSecretId
+      TargetId: !Ref MetadataDBInstance
+      TargetType: AWS::RDS::DBInstance
+
+
+Outputs:
+  MetadataDBHost:
+    Value: !GetAtt MetadataDBInstance.Endpoint.Address
+    Export:
+      Name: database-MetadataDBInstanceHost
+
+  MetadataDBPort:
+    Value: !GetAtt MetadataDBInstance.Endpoint.Port
+    Export:
+      Name: database-MetadataDBInstancePort

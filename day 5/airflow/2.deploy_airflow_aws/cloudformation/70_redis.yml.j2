@@ -1,0 +1,62 @@
+Description: Creates Redis resources
+
+Resources:
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-redis-subnet-group"
+      Description: Redis Subnet Group
+      SubnetIds:
+        - !ImportValue network-PublicSubnet1Id
+        - !ImportValue network-PublicSubnet2Id
+        - !ImportValue network-PublicSubnet3Id
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Redis
+      GroupName: "{{ serviceName }}-{{ ENVIRONMENT }}-redis-security-group"
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 0
+          IpProtocol: -1
+          ToPort: 0
+      SecurityGroupIngress:
+        - CidrIp: "{{ service.cidrBlock }}/16"
+          FromPort: "{{ celeryBackend.port }}"
+          IpProtocol: tcp
+          ToPort: "{{ celeryBackend.port }}"
+      VpcId: !ImportValue network-VpcId
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-redis-security-group"
+
+  CeleryBackend:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      AutoMinorVersionUpgrade: "{{ celeryBackend.autoMinorVersionUpgrade }}"
+      AZMode: "{{ celeryBackend.azMode }}"
+      CacheNodeType: "{{ celeryBackend.instanceType }}"
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      ClusterName: "{{ serviceName }}-{{ ENVIRONMENT }}-celery-cluster"
+      Engine: "{{ celeryBackend.engine }}"
+      EngineVersion: "{{ celeryBackend.engineVersion }}"
+      NumCacheNodes: "{{ celeryBackend.numNodes }}"
+      Port: "{{ celeryBackend.port }}"
+      VpcSecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      Tags:
+        - Key: Name
+          Value: "{{ serviceName }}-{{ ENVIRONMENT }}-celery-cluster"
+
+
+Outputs:
+  CeleryBackendHost:
+    Value: !GetAtt CeleryBackend.RedisEndpoint.Address
+    Export:
+      Name: redis-CeleryBackendHost
+
+  CeleryBackendPort:
+    Value: !GetAtt CeleryBackend.RedisEndpoint.Port
+    Export:
+      Name: redis-CeleryBackendPort

@@ -1,0 +1,17 @@
+Description: Create S3 Butcket
+
+Resources:
+  BucketJuanArmondS3:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: bucket-juanarmond-github-actions
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+
